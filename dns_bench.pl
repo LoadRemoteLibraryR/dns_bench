@@ -8,29 +8,27 @@ use Socket;
 
 my $number_args = $#ARGV + 1;
 my $host = "";
- 
-my $arg = $ARGV[0];
-chomp($arg);
 
-if ($number_args == 1) 
+my $arg = $ARGV[0];
+chomp($arg) if defined $arg;
+
+if ($number_args == 1)
 {
-	if ($arg eq '--help') 
+	if ($arg eq '--help')
 	{
-    	print "\nUsage: ".$0. " [lookup_hostname]\n";
+		print "\nUsage: ".$0. " [lookup_hostname]\n";
 		print "If no hostname is provided www.google.com will be used\n\n";
-    	exit;  
+		exit;
 	}
 	else
 	{
 		$host = $ARGV[0];
 	}
 }
-else 
+else
 {
 	$host = 'www.google.com';
-}  
-
-
+}
 
 my $errorList = "";
 
@@ -64,16 +62,37 @@ my %servers = (
     'DNS4EU Unfiltered' => '86.54.11.100'
 	);
 
-print "\nTiming lookups for $host\n\n";
-printf("%-20s %-15s %4s\n", "Server", "IP", "Time");
-print "-" x 45;
-print "\n";
+my @results;        # successful lookups so far: { name, ip, time }
+my $prev_lines = 0; # how many lines the last render printed
 
+$| = 1;             # autoflush so the live updates show immediately
+
+# Redraw the whole table, sorted by time, overwriting the previous render.
+sub render
+{
+	my @sorted = sort { $a->{time} <=> $b->{time} } @results;
+
+	my $out = "\nTiming lookups for $host\n\n";
+	$out .= sprintf("%-20s %-15s %4s\n", "Server", "IP", "Time");
+	$out .= ("-" x 45) . "\n";
+	for my $r (@sorted)
+	{
+		$out .= sprintf("%-20s %-15s %.5f\n", $r->{name}, $r->{ip}, $r->{time});
+	}
+
+	# Move the cursor back up over the previous render and clear it,
+	# so the table updates in place instead of scrolling.
+	print "\033[${prev_lines}A\033[J" if $prev_lines > 0;
+	print $out;
+	$prev_lines = ($out =~ tr/\n//);
+}
+
+# OS default resolver
 my $start = Time::HiRes::gettimeofday();
 inet_ntoa(inet_aton($host));
 my $end = Time::HiRes::gettimeofday();
-
-printf("%-20s %-15s %.5f\n", "OS_Default", "local", $end - $start);
+push @results, { name => 'OS_Default', ip => 'local', time => $end - $start };
+render();
 
 while (my ($name, $ip) = each(%servers))
 {
@@ -85,20 +104,22 @@ while (my ($name, $ip) = each(%servers))
 	my $query = $res->search($host);
 	my $end = Time::HiRes::gettimeofday();
 
-	if ($query) 
+	if ($query)
 	{
-		foreach my $rr ($query->answer) 
+		foreach my $rr ($query->answer)
 		{
 			next unless $rr->type eq "A";
 			#print $rr->address, "\n";
 		}
-	
-		printf("%-20s %-15s %.5f\n", $name, $ip, $end - $start);
+
+		push @results, { name => $name, ip => $ip, time => $end - $start };
+		render();
 	}
-	else 
+	else
 	{
 		my $err = sprintf("%-10s %-15s failed: %s \n", $name, $ip, $res->errorstring);
 		$errorList .= $err;
 	}
 }
+
 print "\n", $errorList, "\n";
